@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 
 from database import init_db, get_db
 from csv_parser import parse_usbank_csv
+from categorizer import categorize
 from emailer import send_monthly_report
 
 load_dotenv()
@@ -59,6 +60,17 @@ def get_transactions():
     conn.close()
     return jsonify([dict(r) for r in rows])
 
+@app.route('/api/recategorize', methods=['POST'])
+def recategorize_all():
+    conn = get_db()
+    rows = conn.execute("SELECT id, description FROM transactions").fetchall()
+    for row in rows:
+        new_cat = categorize(row['description'])
+        conn.execute("UPDATE transactions SET category=? WHERE id=?", (new_cat, row['id']))
+    conn.commit()
+    conn.close()
+    return jsonify({'updated': len(rows)})
+
 @app.route('/api/transactions/<int:tid>', methods=['PATCH'])
 def update_transaction(tid):
     data = request.get_json()
@@ -84,37 +96,92 @@ def summary():
     month = request.args.get('month')
     conn = get_db()
 
+    # Exclude Transfer + Bank Fees from spending so credit card payments don't double-count
+    EXCLUDE = ('Transfer', 'Bank Fees')
+    exclude_placeholders = ','.join('?' * len(EXCLUDE))
+
     if month:
         by_category = conn.execute(
-            "SELECT category, SUM(amount) as total FROM transactions WHERE month=? GROUP BY category",
-            (month,)
+            f"SELECT category, SUM(amount) as total FROM transactions WHERE month=? AND category NOT IN ({exclude_placeholders}) GROUP BY category",
+            (month, *EXCLUDE)
         ).fetchall()
         monthly = [{'month': month, 'spent': sum(abs(r['total']) for r in by_category if r['total'] < 0),
                     'income': sum(r['total'] for r in by_category if r['total'] > 0)}]
     else:
         by_category = conn.execute(
-            "SELECT category, SUM(amount) as total FROM transactions GROUP BY category"
+            f"SELECT category, SUM(amount) as total FROM transactions WHERE category NOT IN ({exclude_placeholders}) GROUP BY category",
+            EXCLUDE
         ).fetchall()
         monthly = conn.execute(
-            """SELECT month,
-               SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as spent,
-               SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as income
-               FROM transactions GROUP BY month ORDER BY month"""
+            f"""SELECT month,
+               SUM(CASE WHEN amount < 0 AND category NOT IN ({exclude_placeholders}) THEN ABS(amount) ELSE 0 END) as spent,
+               SUM(CASE WHEN amount > 0 AND category NOT IN ({exclude_placeholders}) THEN amount ELSE 0 END) as income
+               FROM transactions GROUP BY month ORDER BY month""",
+            (*EXCLUDE, *EXCLUDE)
         ).fetchall()
 
     conn.close()
 
     expenses = {r['category']: abs(r['total']) for r in by_category if r['total'] < 0}
     income = sum(r['total'] for r in by_category if r['total'] > 0)
+    total_spent = sum(expenses.values())
+    saved = max(0, income - total_spent)
 
-    sankey_nodes = ['Income'] + list(expenses.keys())
-    sankey_sources = [0] * len(expenses)
-    sankey_targets = list(range(1, len(expenses) + 1))
-    sankey_values = list(expenses.values())
+    # 3-level Sankey: Income (left) → Categories (middle) → Savings/Deficit (right)
+    deficit = max(0, total_spent - income)
+    cat_names = list(expenses.keys())
+    n_cats = len(cat_names)
+
+    # Node order: Income, ...categories..., Savings or Deficit
+    sankey_nodes = ['Income'] + cat_names
+    outcome_label = 'Savings' if saved > 0 else 'Deficit'
+    sankey_nodes.append(outcome_label)
+
+    income_idx = 0
+    outcome_idx = len(sankey_nodes) - 1
+
+    sankey_sources = []
+    sankey_targets = []
+    sankey_values = []
+
+    # Income → each category (full expense amount)
+    for i, cat in enumerate(cat_names):
+        cat_idx = i + 1
+        sankey_sources.append(income_idx)
+        sankey_targets.append(cat_idx)
+        sankey_values.append(expenses[cat])
+
+    # Each category → Savings (proportional share) or → Deficit (proportional share)
+    outcome_amount = saved if saved > 0 else deficit
+    for i, cat in enumerate(cat_names):
+        cat_idx = i + 1
+        share = expenses[cat] / total_spent * outcome_amount if total_spent > 0 else 0
+        sankey_sources.append(cat_idx)
+        sankey_targets.append(outcome_idx)
+        sankey_values.append(share)
+
+    # Node x/y positions: Income left, categories middle, outcome right
+    n_nodes = len(sankey_nodes)
+    node_x = [0.01] + [0.5] * n_cats + [0.99]
+    # Spread categories evenly in y
+    cat_ys = [round(0.05 + i * (0.9 / max(n_cats - 1, 1)), 3) for i in range(n_cats)]
+    node_y = [0.5] + cat_ys + [0.5]
+
+    node_colors = []
+    for node in sankey_nodes:
+        if node == 'Income':
+            node_colors.append('#27ae60')
+        elif node == 'Savings':
+            node_colors.append('#2ecc71')
+        elif node == 'Deficit':
+            node_colors.append('#e74c3c')
+        else:
+            node_colors.append('#3498db')
 
     return jsonify({
         'income': income,
-        'total_spent': sum(expenses.values()),
+        'total_spent': total_spent,
+        'saved': saved,
         'by_category': [{'category': k, 'total': v} for k, v in sorted(expenses.items(), key=lambda x: -x[1])],
         'monthly_trend': [dict(r) for r in monthly],
         'sankey': {
@@ -122,8 +189,29 @@ def summary():
             'sources': sankey_sources,
             'targets': sankey_targets,
             'values': sankey_values,
+            'node_colors': node_colors,
+            'node_x': node_x,
+            'node_y': node_y,
         }
     })
+
+@app.route('/api/transactions/by-category', methods=['GET'])
+def transactions_by_category():
+    category = request.args.get('category')
+    month = request.args.get('month')
+    conn = get_db()
+    if month:
+        rows = conn.execute(
+            "SELECT * FROM transactions WHERE category=? AND month=? ORDER BY date DESC",
+            (category, month)
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT * FROM transactions WHERE category=? ORDER BY date DESC",
+            (category,)
+        ).fetchall()
+    conn.close()
+    return jsonify([dict(r) for r in rows])
 
 @app.route('/api/months', methods=['GET'])
 def get_months():

@@ -161,6 +161,35 @@
     select.cat-select {
       border: 1px solid #ddd; border-radius: 4px; padding: 3px 6px; font-size: 12px;
     }
+
+    /* Category drill-down modal */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.45); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: white; border-radius: 12px; width: 90%; max-width: 700px;
+      max-height: 80vh; display: flex; flex-direction: column;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.2);
+    }
+    .modal-header {
+      padding: 18px 24px; border-bottom: 1px solid #eee;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .modal-header h2 { font-size: 17px; color: #2c3e50; }
+    .modal-header span { font-size: 13px; color: #999; }
+    .modal-close {
+      background: none; border: none; font-size: 20px;
+      cursor: pointer; color: #999; line-height: 1;
+    }
+    .modal-close:hover { color: #333; }
+    .modal-body { overflow-y: auto; padding: 16px 24px; }
+    .modal-body table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .modal-body th { background: #f8f9fa; padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; color: #666; }
+    .modal-body td { padding: 9px 10px; border-bottom: 1px solid #f0f0f0; }
+    .modal-footer { padding: 14px 24px; border-top: 1px solid #eee; font-size: 13px; color: #666; }
   </style>
 </head>
 <body>
@@ -209,7 +238,7 @@
     <div class="cards">
       <div class="card income"><div class="label">Income</div><div class="value" id="cardIncome">$0</div></div>
       <div class="card spent"><div class="label">Total Spent</div><div class="value" id="cardSpent">$0</div></div>
-      <div class="card net"><div class="label">Net</div><div class="value" id="cardNet">$0</div></div>
+      <div class="card net"><div class="label">Saved This Month</div><div class="value" id="cardNet">$0</div></div>
     </div>
 
     <div class="chart-box">
@@ -218,8 +247,8 @@
     </div>
 
     <div class="chart-box">
-      <h2>Spending by Category</h2>
-      <div id="barChart" style="height:300px"></div>
+      <h2>Income vs Spending — Last 3 Months</h2>
+      <div id="trendChart" style="height:300px"></div>
     </div>
   </div>
 
@@ -307,6 +336,26 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Category drill-down modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <h2 id="modalTitle">Category</h2>
+        <span id="modalSubtitle"></span>
+      </div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <table>
+        <thead><tr><th>Date</th><th>Description</th><th>Amount</th></tr></thead>
+        <tbody id="modalBody"></tbody>
+      </table>
+    </div>
+    <div class="modal-footer" id="modalFooter"></div>
+  </div>
+</div>
+
 <script>
 const API = 'http://localhost:5000/api';
 const CATEGORIES = [
@@ -374,52 +423,95 @@ async function loadDashboard() {
 
   document.getElementById('cardIncome').textContent = fmt(d.income);
   document.getElementById('cardSpent').textContent = fmt(d.total_spent);
-  const net = d.income - d.total_spent;
   const netEl = document.getElementById('cardNet');
-  netEl.textContent = (net < 0 ? '-' : '') + fmt(net);
-  netEl.style.color = net >= 0 ? '#27ae60' : '#e74c3c';
+  netEl.textContent = fmt(d.saved);
+  netEl.style.color = d.saved > 0 ? '#27ae60' : '#e74c3c';
 
   // Sankey
   if (d.sankey.nodes.length > 1) {
+    const sankeyEl = document.getElementById('sankeyChart');
     Plotly.newPlot('sankeyChart', [{
       type: 'sankey',
       orientation: 'h',
       node: {
-        pad: 15, thickness: 20,
+        pad: 12, thickness: 24,
         line: { color: '#ccc', width: 0.5 },
         label: d.sankey.nodes,
-        color: ['#27ae60', ...d.sankey.targets.map(() => '#3498db')]
+        color: d.sankey.node_colors,
+        x: d.sankey.node_x,
+        y: d.sankey.node_y,
+        customdata: d.sankey.nodes.map(n => {
+          if (n === 'Income') return fmt(d.income);
+          if (n === 'Savings') return fmt(d.saved);
+          if (n === 'Deficit') return fmt(d.total_spent - d.income);
+          const cat = d.by_category.find(c => c.category === n);
+          return cat ? fmt(cat.total) : '';
+        }),
+        hovertemplate: '<b>%{label}</b><br>%{customdata}<extra></extra>',
       },
       link: {
         source: d.sankey.sources,
         target: d.sankey.targets,
         value: d.sankey.values,
-        color: d.sankey.values.map(() => 'rgba(52,152,219,0.25)')
+        color: d.sankey.sources.map(s => {
+          const src = d.sankey.nodes[s];
+          if (src === 'Deficit') return 'rgba(231,76,60,0.18)';
+          const tgt = d.sankey.nodes[d.sankey.targets[d.sankey.sources.indexOf(s)]];
+          if (tgt === 'Savings') return 'rgba(46,204,113,0.25)';
+          return 'rgba(52,152,219,0.18)';
+        }),
+        hovertemplate: '<b>%{source.label} → %{target.label}</b><extra></extra>',
       }
     }], {
       margin: { t: 10, b: 10, l: 10, r: 10 },
       font: { size: 12 },
       paper_bgcolor: 'white'
     }, { responsive: true, displayModeBar: false });
+
+    // Click on a node → open drill-down modal
+    sankeyEl.on('plotly_click', e => {
+      const pt = e.points[0];
+      const label = pt.label || (pt.target && pt.target.label);
+      if (label && label !== 'Income' && label !== 'Savings' && label !== 'Deficit') {
+        openCategoryModal(label);
+      }
+    });
   } else {
     document.getElementById('sankeyChart').innerHTML = '<p style="color:#aaa;text-align:center;padding:60px">Upload a CSV to see your spending flow.</p>';
   }
 
-  // Bar chart
-  if (d.by_category.length) {
-    Plotly.newPlot('barChart', [{
-      type: 'bar',
-      x: d.by_category.map(c => c.category),
-      y: d.by_category.map(c => c.total),
-      marker: { color: '#3498db' },
-      text: d.by_category.map(c => fmt(c.total)),
-      textposition: 'outside',
-    }], {
-      margin: { t: 10, b: 80, l: 60, r: 10 },
-      yaxis: { tickprefix: '$' },
-      paper_bgcolor: 'white',
-      plot_bgcolor: 'white',
+  // Trend chart — income vs spending for last 3 months
+  const trend = d.monthly_trend.slice(-3);
+  if (trend.length) {
+    const fmtMonth = m => { const [y,mo] = m.split('-'); return new Date(y,mo-1).toLocaleString('en-US',{month:'short',year:'numeric'}); };
+    Plotly.newPlot('trendChart', [
+      {
+        type: 'bar', name: 'Income',
+        x: trend.map(t => fmtMonth(t.month)), y: trend.map(t => t.income),
+        marker: { color: '#27ae60' },
+      },
+      {
+        type: 'bar', name: 'Spending',
+        x: trend.map(t => fmtMonth(t.month)), y: trend.map(t => t.spent),
+        marker: { color: '#e74c3c' },
+      },
+      {
+        type: 'scatter', mode: 'lines+markers', name: 'Net',
+        x: trend.map(t => fmtMonth(t.month)), y: trend.map(t => t.income - t.spent),
+        line: { color: '#2980b9', width: 2 },
+        marker: { size: 7 },
+        yaxis: 'y2',
+      }
+    ], {
+      barmode: 'group',
+      margin: { t: 10, b: 40, l: 60, r: 60 },
+      yaxis: { tickprefix: '$', title: 'Amount' },
+      yaxis2: { tickprefix: '$', overlaying: 'y', side: 'right', title: 'Net' },
+      legend: { orientation: 'h', y: -0.2 },
+      paper_bgcolor: 'white', plot_bgcolor: 'white',
     }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('trendChart').innerHTML = '<p style="color:#aaa;text-align:center;padding:60px">Upload more months to see trends.</p>';
   }
 }
 
@@ -560,6 +652,39 @@ async function sendReport() {
   if (d.error) { toast('Error: ' + d.error, 5000); }
   else { toast('✓ Report sent to both of you!'); }
 }
+
+// ── Category drill-down modal ───────────────────────────────────────────────
+async function openCategoryModal(category) {
+  const month = document.getElementById('monthPicker').value;
+  const url = month
+    ? `${API}/transactions/by-category?category=${encodeURIComponent(category)}&month=${month}`
+    : `${API}/transactions/by-category?category=${encodeURIComponent(category)}`;
+  const txs = await fetch(url).then(r => r.json());
+
+  const total = txs.reduce((s, t) => s + t.amount, 0);
+  const label = month ? ` — ${month}` : ' — All Time';
+
+  document.getElementById('modalTitle').textContent = category;
+  document.getElementById('modalSubtitle').textContent = `${txs.length} transactions${label}`;
+  document.getElementById('modalBody').innerHTML = txs.map(t => `
+    <tr>
+      <td>${t.date}</td>
+      <td>${t.description}</td>
+      <td class="${t.amount >= 0 ? 'amount-pos' : 'amount-neg'}">${t.amount >= 0 ? '+' : ''}${fmt(t.amount)}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="3" style="color:#aaa;text-align:center;padding:20px">No transactions</td></tr>';
+
+  document.getElementById('modalFooter').innerHTML =
+    `Total: <strong class="${total >= 0 ? 'amount-pos' : 'amount-neg'}">${total >= 0 ? '+' : ''}${fmt(total)}</strong>`;
+
+  document.getElementById('modalOverlay').classList.add('open');
+}
+
+function closeModal() {
+  document.getElementById('modalOverlay').classList.remove('open');
+}
+
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
 
 // Init
 loadMonths().then(() => loadDashboard());
