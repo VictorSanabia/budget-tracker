@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Budget Tracker</title>
+  <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', Arial, sans-serif; background: #f4f6f9; color: #333; }
+
+    header {
+      background: #2c3e50;
+      color: white;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 { font-size: 20px; font-weight: 600; }
+    header span { font-size: 13px; opacity: 0.7; }
+
+    nav {
+      background: #34495e;
+      display: flex;
+      gap: 2px;
+      padding: 0 32px;
+    }
+    nav button {
+      background: none;
+      border: none;
+      color: #bdc3c7;
+      padding: 12px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      border-bottom: 3px solid transparent;
+    }
+    nav button.active { color: white; border-bottom-color: #3498db; }
+    nav button:hover { color: white; }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 28px 24px; }
+
+    .section { display: none; }
+    .section.active { display: block; }
+
+    /* Cards */
+    .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 24px; }
+    .card {
+      background: white; border-radius: 10px; padding: 20px 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .card .label { font-size: 12px; color: #999; text-transform: uppercase; letter-spacing: .5px; }
+    .card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+    .card.income .value { color: #27ae60; }
+    .card.spent .value { color: #e74c3c; }
+    .card.net .value { color: #2980b9; }
+
+    /* Upload */
+    .upload-area {
+      background: white; border-radius: 10px; padding: 28px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      margin-bottom: 24px;
+    }
+    .upload-area h2 { font-size: 16px; margin-bottom: 16px; color: #2c3e50; }
+    .upload-row { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; }
+    .upload-row label { font-size: 13px; color: #666; display: block; margin-bottom: 4px; }
+    .upload-row select, .upload-row input[type=file] {
+      border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px;
+      font-size: 14px; background: white;
+    }
+    .btn {
+      background: #3498db; color: white; border: none; border-radius: 6px;
+      padding: 9px 20px; cursor: pointer; font-size: 14px; font-weight: 500;
+    }
+    .btn:hover { background: #2980b9; }
+    .btn.red { background: #e74c3c; }
+    .btn.red:hover { background: #c0392b; }
+    .btn.green { background: #27ae60; }
+    .btn.green:hover { background: #219a52; }
+    .btn.sm { padding: 5px 12px; font-size: 12px; }
+
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #2c3e50; color: white; padding: 12px 20px;
+      border-radius: 8px; font-size: 14px; display: none; z-index: 999;
+    }
+
+    /* Month picker */
+    .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
+    .controls select { border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; font-size: 14px; }
+    .controls label { font-size: 14px; color: #666; }
+
+    /* Chart */
+    .chart-box {
+      background: white; border-radius: 10px; padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 24px;
+    }
+    .chart-box h2 { font-size: 15px; margin-bottom: 14px; color: #2c3e50; }
+
+    /* Table */
+    .table-box {
+      background: white; border-radius: 10px; padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .table-box h2 { font-size: 15px; margin-bottom: 14px; color: #2c3e50; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th { background: #f8f9fa; text-align: left; padding: 10px 12px; color: #666; font-weight: 600; font-size: 12px; text-transform: uppercase; }
+    td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 12px;
+      font-size: 11px; font-weight: 600;
+      background: #eaf0fb; color: #2980b9;
+    }
+
+    /* Goals */
+    .goals-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; margin-top: 20px; }
+    .goal-card {
+      background: white; border-radius: 10px; padding: 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+    .goal-card h3 { font-size: 15px; margin-bottom: 8px; }
+    .progress-bar { background: #eee; border-radius: 99px; height: 10px; margin: 10px 0; overflow: hidden; }
+    .progress-fill { background: #27ae60; height: 100%; border-radius: 99px; transition: width .4s; }
+    .goal-meta { font-size: 12px; color: #999; display: flex; justify-content: space-between; }
+    .goal-actions { display: flex; gap: 8px; margin-top: 12px; }
+
+    /* Goal form */
+    .goal-form {
+      background: white; border-radius: 10px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08); margin-bottom: 16px;
+    }
+    .goal-form h2 { font-size: 16px; margin-bottom: 16px; color: #2c3e50; }
+    .form-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .form-field { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }
+    .form-field label { font-size: 13px; color: #666; }
+    .form-field input {
+      border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 14px;
+    }
+
+    /* Email settings */
+    .settings-box {
+      background: white; border-radius: 10px; padding: 24px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08); max-width: 500px;
+    }
+    .settings-box h2 { font-size: 16px; margin-bottom: 6px; color: #2c3e50; }
+    .settings-box p { font-size: 13px; color: #888; margin-bottom: 16px; }
+    .settings-box .form-field { margin-bottom: 12px; }
+    .settings-box input {
+      width: 100%; border: 1px solid #ddd; border-radius: 6px;
+      padding: 9px 12px; font-size: 14px;
+    }
+    .send-row { display: flex; gap: 10px; align-items: center; margin-top: 16px; flex-wrap: wrap; }
+    .send-row select { border: 1px solid #ddd; border-radius: 6px; padding: 8px 10px; font-size: 14px; }
+
+    .amount-pos { color: #27ae60; font-weight: 600; }
+    .amount-neg { color: #e74c3c; }
+
+    select.cat-select {
+      border: 1px solid #ddd; border-radius: 4px; padding: 3px 6px; font-size: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>💰 Budget Tracker</h1>
+  <span>Victor &amp; Dominique</span>
+</header>
+
+<nav>
+  <button class="active" onclick="showTab('dashboard')">Dashboard</button>
+  <button onclick="showTab('transactions')">Transactions</button>
+  <button onclick="showTab('goals')">Savings Goals</button>
+  <button onclick="showTab('settings')">Email Settings</button>
+</nav>
+
+<main>
+
+  <!-- DASHBOARD -->
+  <div id="tab-dashboard" class="section active">
+    <div class="upload-area">
+      <h2>Upload US Bank CSV</h2>
+      <div class="upload-row">
+        <div>
+          <label>Account Type</label>
+          <select id="uploadSource">
+            <option value="checking">Checking Account</option>
+            <option value="credit_card">Credit Card</option>
+          </select>
+        </div>
+        <div>
+          <label>Select CSV File</label>
+          <input type="file" id="csvFile" accept=".csv" />
+        </div>
+        <button class="btn" onclick="uploadCSV()">Upload</button>
+      </div>
+    </div>
+
+    <div class="controls">
+      <label>Month:</label>
+      <select id="monthPicker" onchange="loadDashboard()">
+        <option value="">All Time</option>
+      </select>
+    </div>
+
+    <div class="cards">
+      <div class="card income"><div class="label">Income</div><div class="value" id="cardIncome">$0</div></div>
+      <div class="card spent"><div class="label">Total Spent</div><div class="value" id="cardSpent">$0</div></div>
+      <div class="card net"><div class="label">Net</div><div class="value" id="cardNet">$0</div></div>
+    </div>
+
+    <div class="chart-box">
+      <h2>Spending Flow (Sankey)</h2>
+      <div id="sankeyChart" style="height:380px"></div>
+    </div>
+
+    <div class="chart-box">
+      <h2>Spending by Category</h2>
+      <div id="barChart" style="height:300px"></div>
+    </div>
+  </div>
+
+  <!-- TRANSACTIONS -->
+  <div id="tab-transactions" class="section">
+    <div class="controls">
+      <label>Month:</label>
+      <select id="txMonthPicker" onchange="loadTransactions()">
+        <option value="">All</option>
+      </select>
+    </div>
+    <div class="table-box">
+      <h2>Transactions</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Date</th><th>Description</th><th>Category</th><th>Source</th><th>Amount</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="txBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- GOALS -->
+  <div id="tab-goals" class="section">
+    <div class="goal-form">
+      <h2>Add Savings Goal</h2>
+      <div class="form-row">
+        <div class="form-field">
+          <label>Goal Name</label>
+          <input type="text" id="goalName" placeholder="e.g. Emergency Fund" />
+        </div>
+        <div class="form-field">
+          <label>Target Amount ($)</label>
+          <input type="number" id="goalTarget" placeholder="5000" min="1" />
+        </div>
+        <div class="form-field">
+          <label>Current Saved ($)</label>
+          <input type="number" id="goalCurrent" placeholder="0" min="0" />
+        </div>
+        <div class="form-field">
+          <label>Deadline (optional)</label>
+          <input type="date" id="goalDeadline" />
+        </div>
+        <div class="form-field" style="justify-content:flex-end">
+          <button class="btn green" onclick="addGoal()">Add Goal</button>
+        </div>
+      </div>
+    </div>
+    <div class="goals-grid" id="goalsGrid"></div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="tab-settings" class="section">
+    <div class="settings-box">
+      <h2>Email Report Settings</h2>
+      <p>Reports are sent automatically on the 1st of each month to:<br>
+        <strong>victorsanabia@gmail.com</strong> &amp; <strong>dominique.guidry@gmail.com</strong>
+      </p>
+      <p style="color:#e67e22;margin-bottom:16px;font-size:13px">
+        Use a Gmail account with an <a href="https://myaccount.google.com/apppasswords" target="_blank">App Password</a> (not your regular password).
+      </p>
+      <div class="form-field">
+        <label>Gmail Address (sender)</label>
+        <input type="email" id="smtpUser" placeholder="youremail@gmail.com" />
+      </div>
+      <div class="form-field">
+        <label>Gmail App Password</label>
+        <input type="password" id="smtpPass" placeholder="xxxx xxxx xxxx xxxx" />
+      </div>
+      <button class="btn" onclick="saveEmailConfig()">Save Email Settings</button>
+
+      <hr style="margin:24px 0;border:none;border-top:1px solid #eee" />
+
+      <h2>Send Report Now</h2>
+      <div class="send-row">
+        <select id="sendMonth"></select>
+        <button class="btn green" onclick="sendReport()">Send Report</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = 'http://localhost:5000/api';
+const CATEGORIES = [
+  'Groceries','Dining','Gas & Fuel','Transportation','Shopping',
+  'Subscriptions','Utilities','Healthcare','Entertainment','Travel',
+  'Personal Care','Education','Income','Transfer','Other'
+];
+
+function showTab(name) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  event.target.classList.add('active');
+  if (name === 'dashboard') loadDashboard();
+  if (name === 'transactions') loadTransactions();
+  if (name === 'goals') loadGoals();
+  if (name === 'settings') loadSendMonths();
+}
+
+function toast(msg, duration=3000) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', duration);
+}
+
+function fmt(n) { return '$' + Math.abs(n).toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2}); }
+
+// ── Months ──────────────────────────────────────────────────────────────────
+async function loadMonths() {
+  const res = await fetch(`${API}/months`);
+  const months = await res.json();
+  ['monthPicker','txMonthPicker'].forEach(id => {
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = '<option value="">All</option>' + months.map(m => `<option value="${m}">${m}</option>`).join('');
+    if (current) sel.value = current;
+  });
+  return months;
+}
+
+// ── Upload ──────────────────────────────────────────────────────────────────
+async function uploadCSV() {
+  const file = document.getElementById('csvFile').files[0];
+  const source = document.getElementById('uploadSource').value;
+  if (!file) { toast('Please select a CSV file'); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('source', source);
+  const res = await fetch(`${API}/upload`, { method: 'POST', body: fd });
+  const data = await res.json();
+  if (data.error) { toast('Error: ' + data.error); return; }
+  toast(`✓ Imported ${data.inserted} transactions`);
+  document.getElementById('csvFile').value = '';
+  await loadMonths();
+  loadDashboard();
+}
+
+// ── Dashboard ───────────────────────────────────────────────────────────────
+async function loadDashboard() {
+  const month = document.getElementById('monthPicker').value;
+  const url = month ? `${API}/summary?month=${month}` : `${API}/summary`;
+  const res = await fetch(url);
+  const d = await res.json();
+
+  document.getElementById('cardIncome').textContent = fmt(d.income);
+  document.getElementById('cardSpent').textContent = fmt(d.total_spent);
+  const net = d.income - d.total_spent;
+  const netEl = document.getElementById('cardNet');
+  netEl.textContent = (net < 0 ? '-' : '') + fmt(net);
+  netEl.style.color = net >= 0 ? '#27ae60' : '#e74c3c';
+
+  // Sankey
+  if (d.sankey.nodes.length > 1) {
+    Plotly.newPlot('sankeyChart', [{
+      type: 'sankey',
+      orientation: 'h',
+      node: {
+        pad: 15, thickness: 20,
+        line: { color: '#ccc', width: 0.5 },
+        label: d.sankey.nodes,
+        color: ['#27ae60', ...d.sankey.targets.map(() => '#3498db')]
+      },
+      link: {
+        source: d.sankey.sources,
+        target: d.sankey.targets,
+        value: d.sankey.values,
+        color: d.sankey.values.map(() => 'rgba(52,152,219,0.25)')
+      }
+    }], {
+      margin: { t: 10, b: 10, l: 10, r: 10 },
+      font: { size: 12 },
+      paper_bgcolor: 'white'
+    }, { responsive: true, displayModeBar: false });
+  } else {
+    document.getElementById('sankeyChart').innerHTML = '<p style="color:#aaa;text-align:center;padding:60px">Upload a CSV to see your spending flow.</p>';
+  }
+
+  // Bar chart
+  if (d.by_category.length) {
+    Plotly.newPlot('barChart', [{
+      type: 'bar',
+      x: d.by_category.map(c => c.category),
+      y: d.by_category.map(c => c.total),
+      marker: { color: '#3498db' },
+      text: d.by_category.map(c => fmt(c.total)),
+      textposition: 'outside',
+    }], {
+      margin: { t: 10, b: 80, l: 60, r: 10 },
+      yaxis: { tickprefix: '$' },
+      paper_bgcolor: 'white',
+      plot_bgcolor: 'white',
+    }, { responsive: true, displayModeBar: false });
+  }
+}
+
+// ── Transactions ─────────────────────────────────────────────────────────────
+async function loadTransactions() {
+  const month = document.getElementById('txMonthPicker').value;
+  const url = month ? `${API}/transactions?month=${month}` : `${API}/transactions`;
+  const res = await fetch(url);
+  const txs = await res.json();
+  const body = document.getElementById('txBody');
+  body.innerHTML = txs.map(t => `
+    <tr>
+      <td>${t.date}</td>
+      <td>${t.description}</td>
+      <td>
+        <select class="cat-select" onchange="updateCategory(${t.id}, this.value)">
+          ${CATEGORIES.map(c => `<option${c===t.category?' selected':''}>${c}</option>`).join('')}
+        </select>
+      </td>
+      <td><span class="badge">${t.source}</span></td>
+      <td class="${t.amount >= 0 ? 'amount-pos' : 'amount-neg'}">${t.amount >= 0 ? '+' : ''}${fmt(t.amount)}</td>
+      <td><button class="btn red sm" onclick="deleteTransaction(${t.id})">✕</button></td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" style="text-align:center;color:#aaa;padding:30px">No transactions yet. Upload a CSV!</td></tr>';
+}
+
+async function updateCategory(id, category) {
+  await fetch(`${API}/transactions/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category })
+  });
+  toast('Category updated');
+}
+
+async function deleteTransaction(id) {
+  await fetch(`${API}/transactions/${id}`, { method: 'DELETE' });
+  loadTransactions();
+}
+
+// ── Goals ─────────────────────────────────────────────────────────────────
+async function loadGoals() {
+  const res = await fetch(`${API}/goals`);
+  const goals = await res.json();
+  const grid = document.getElementById('goalsGrid');
+  grid.innerHTML = goals.map(g => {
+    const pct = g.target_amount > 0 ? Math.min(100, (g.current_amount / g.target_amount) * 100) : 0;
+    return `
+      <div class="goal-card">
+        <h3>${g.name}</h3>
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+        <div class="goal-meta">
+          <span>${fmt(g.current_amount)} saved</span>
+          <span>Goal: ${fmt(g.target_amount)}</span>
+        </div>
+        <div class="goal-meta" style="margin-top:4px">
+          <span style="color:${pct>=100?'#27ae60':'#3498db'}">${pct.toFixed(0)}% complete</span>
+          ${g.deadline ? `<span>By ${g.deadline}</span>` : ''}
+        </div>
+        <div class="goal-actions">
+          <input type="number" placeholder="Add amount" id="add-${g.id}"
+            style="border:1px solid #ddd;border-radius:6px;padding:5px 8px;font-size:13px;width:110px" min="0" />
+          <button class="btn green sm" onclick="addToGoal(${g.id})">Add</button>
+          <button class="btn red sm" onclick="deleteGoal(${g.id})">Delete</button>
+        </div>
+      </div>`;
+  }).join('') || '<p style="color:#aaa">No savings goals yet. Add one above!</p>';
+}
+
+async function addGoal() {
+  const name = document.getElementById('goalName').value.trim();
+  const target = parseFloat(document.getElementById('goalTarget').value);
+  const current = parseFloat(document.getElementById('goalCurrent').value) || 0;
+  const deadline = document.getElementById('goalDeadline').value;
+  if (!name || !target) { toast('Please enter a name and target amount'); return; }
+  await fetch(`${API}/goals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, target_amount: target, current_amount: current, deadline: deadline || null })
+  });
+  document.getElementById('goalName').value = '';
+  document.getElementById('goalTarget').value = '';
+  document.getElementById('goalCurrent').value = '';
+  document.getElementById('goalDeadline').value = '';
+  toast('Goal added!');
+  loadGoals();
+}
+
+async function addToGoal(id) {
+  const amount = parseFloat(document.getElementById('add-' + id).value);
+  if (!amount || amount <= 0) { toast('Enter a valid amount'); return; }
+  const res = await fetch(`${API}/goals`);
+  const goals = await res.json();
+  const goal = goals.find(g => g.id === id);
+  await fetch(`${API}/goals/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ current_amount: goal.current_amount + amount })
+  });
+  toast(`Added ${fmt(amount)} to goal`);
+  loadGoals();
+}
+
+async function deleteGoal(id) {
+  await fetch(`${API}/goals/${id}`, { method: 'DELETE' });
+  loadGoals();
+}
+
+// ── Email Settings ─────────────────────────────────────────────────────────
+async function loadSendMonths() {
+  const months = await loadMonths();
+  const sel = document.getElementById('sendMonth');
+  sel.innerHTML = months.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+async function saveEmailConfig() {
+  const smtp_user = document.getElementById('smtpUser').value.trim();
+  const smtp_pass = document.getElementById('smtpPass').value.trim();
+  if (!smtp_user || !smtp_pass) { toast('Please fill in both fields'); return; }
+  await fetch(`${API}/email-config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ smtp_user, smtp_pass })
+  });
+  toast('✓ Email settings saved');
+}
+
+async function sendReport() {
+  const month = document.getElementById('sendMonth').value;
+  if (!month) { toast('Select a month first'); return; }
+  toast('Sending report...');
+  const res = await fetch(`${API}/send-report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ month })
+  });
+  const d = await res.json();
+  if (d.error) { toast('Error: ' + d.error, 5000); }
+  else { toast('✓ Report sent to both of you!'); }
+}
+
+// Init
+loadMonths().then(() => loadDashboard());
+</script>
+</body>
+</html>
